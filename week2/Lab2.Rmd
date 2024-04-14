@@ -1,0 +1,236 @@
+---
+title: "Lab 2: Sentiment Analysis I"
+author: "Annie Adams"
+date: "2024-04-10"
+output: html_document
+---
+
+## Assignment (Due 4/16 by 11:59 PM)
+
+### Obtain your data and load it into R
+
+-   Access the Nexis Uni database through the UCSB library: <https://www.library.ucsb.edu/research/db/211>
+
+-   Choose a key search term or terms to define a set of articles.
+
+-   Use your search term along with appropriate filters to obtain and download a batch of at least 100 full text search results (.docx). You are limited to downloading 100 articles at a time, so if you have more results than that, you have to download them in batches (rows 1-100, 101-200, 201-300 etc.)
+
+    Guidance for {LexisNexisTools} : <https://github.com/JBGruber/LexisNexisTools/wiki/Downloading-Files-From-Nexis>
+
+-   Read your Nexis article documents into RStudio.
+
+-   Use the full text of the articles for the analysis. Inspect the data (in particular the full-text article data).
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(LexisNexisTools)
+library(dplyr)
+library(readr)
+library(stringr)
+library(here)
+library(tidytext)
+library(tidyr) #pivot_wider()
+library(ggplot2)
+library(RColorBrewer)
+```
+
+
+```{r}
+
+
+
+
+barbie <- list.files(pattern = ".docx", path =here("Nexis/barbie"),
+                      full.names = TRUE, 
+                      recursive = TRUE, 
+                      ignore.case = TRUE)
+
+
+```
+
+
+```{r}
+# read in files
+dat <- lnt_read(barbie, convert_date = FALSE, remove_cover = FALSE)
+
+meta_df <-  dat@meta
+articles_df <- dat@articles
+paragraphs_df <- dat@paragraphs
+
+dat2 <- tibble(Date = meta_df$Date, Headline = meta_df$Headline, idi = articles_df$ID, text = articles_df$Article)
+```
+
+-   If necessary, clean any artifacts of the data collection process (hint: this type of thing should be removed: "Apr 04, 2022( Biofuels Digest: <http://www.biofuelsdigest.com/Delivered> by Newstex") and any other urls)
+
+-   Remove any clear duplicate articles. LNT has a method for this, but it doesn't seem to work, so you probably need to do it manually.
+
+
+```{r}
+
+# Find non-duplicated rows 
+non_duplicated <- !duplicated(dat2$Headline)
+
+#Subset the dataframe to keep only non-duplicated rows
+dat2 <- dat2[non_duplicated, ]
+
+```
+
+
+### Explore your data and conduct the following analyses:
+
+1.  Calculate mean sentiment across all your articles
+### load bing sentiment
+```{r get_bing}
+#load the bing sentiment lexicon from tidytext
+bing_sent <-  get_sentiments("bing")
+```
+
+```{r}
+text_words <- dat2 %>% unnest_tokens(output = word, input = text, token = "words")
+
+#Let's start with a simple numerical score
+sent_words <- text_words%>% 
+  anti_join(stop_words, by = 'word') %>% 
+  inner_join(bing_sent, by = 'word') %>% 
+  mutate(sent_num = case_when(sentiment == 'negative' ~ -1,
+                            sentiment == 'positive' ~ 1 ))
+
+sent_words
+```
+
+
+
+```{r}
+# calculate mean sentiment 
+sent_article <- sent_words %>% 
+  group_by(Headline) %>% 
+  count(idi, sentiment) %>% 
+  pivot_wider(names_from = sentiment, values_from = n) %>% 
+  mutate(polarity = positive - negative )
+  
+#Mean polarity
+mean(sent_article$polarity, na.rm = T)
+```
+
+I received a mean setiment score of 5.5. This means that, on average, there was 5.5 more positive words per article than negative words. 
+
+2.  Sentiment by article plot. The one provided in class needs significant improvement.
+
+
+```{r sentiment_score_plot,  warning = FALSE}
+
+# Improved ggplot code
+ggplot(sent_article, aes(x = idi)) +
+  geom_col(aes(y = positive, fill = "Positive Sentiment"), stat = "identity", show.legend = TRUE) +
+  geom_col(aes(y = negative, fill = "Negative Sentiment"), stat = "identity", show.legend = TRUE) +
+  scale_fill_manual(values = c("Positive Sentiment" = "#F8DE7E", "Negative Sentiment" = "#FF5733")) +
+  labs(title = 'Sentiment Analysis: Barbie Articles',
+       y = 'Sentiment Score',
+       x = '') +  
+  theme_classic() +
+  theme(axis.title = element_blank(),
+        legend.title = element_blank(),  # Hides the legend title
+        legend.position = "bottom",
+        plot.title = element_text(size = 16, face = "bold"),
+        axis.text = element_text(size = 12),
+        axis.title.y = element_text(size = 14, face = "bold")) +
+  guides(fill = guide_legend(title = "Sentiment Type"))
+
+```
+
+
+
+3.  Most common nrc emotion words and plot by emotion
+
+```{r}
+#find most common nrc emotion words
+nrc_sent <- get_sentiments('nrc')
+nrc_word_counts <- text_words %>% 
+  anti_join(stop_words, by = 'word') %>% 
+  inner_join(nrc_sent) %>% 
+  count(word, sentiment, sort = T)
+nrc_word_counts
+
+
+#plot words by emotion
+nrc_word_counts %>%  
+  group_by(sentiment) %>% 
+  slice_max(n, n = 5) %>% 
+  ungroup() %>% 
+mutate(word = reorder(word, n)) %>% 
+  ggplot(aes(n, word, fill = sentiment)) + 
+  geom_col(show.legend  = FALSE) + 
+  facet_wrap(~ sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment", y = NULL)
+```
+
+
+4.  Look at the nrc contribution to emotion by word plots. Identify and reclassify or remove at least one term that gives misleading results in your context.
+
+
+```{r}
+#removing word doll because it is used in the wrong context
+nrc_word_counts <- nrc_word_counts %>% filter(word != "doll")
+
+
+#plot again 
+#plot words by emotion
+nrc_word_counts %>%  
+  group_by(sentiment) %>% 
+  slice_max(n, n = 5) %>% 
+  ungroup() %>% 
+mutate(word = reorder(word, n)) %>% 
+  ggplot(aes(n, word, fill = sentiment)) + 
+  geom_col(show.legend  = FALSE) + 
+  facet_wrap(~ sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment", y = NULL)
+```
+
+5.  Plot the amount of nrc emotion words as a percentage of all the emotion words used each day (aggregate text from articles published on the same day). How does the distribution of emotion words change over time? Can you think of any reason this would be the case?
+
+
+
+
+```{r}
+
+text_words$Date <- as.Date(text_words$Date, format = "%B %d, %Y")
+
+
+
+# Calculate total sentiments per day
+total_sentiments_per_day <- text_words %>%
+  anti_join(stop_words, by = "word") %>%
+  inner_join(nrc_sent, by = "word") %>%
+  count(Date) %>%
+  rename(total_count = n)
+
+# Calculate counts of each sentiment per day
+daily_sentiment_counts <- text_words %>%
+  anti_join(stop_words, by = "word") %>%
+  inner_join(nrc_sent, by = "word") %>%
+  count(Date, sentiment)
+
+
+
+# Join to get the total counts per day along with each sentiment count
+sentiment_percentages <- daily_sentiment_counts %>%
+  left_join(total_sentiments_per_day, by = "Date") %>%
+  mutate(percentage = n / total_count * 100)
+
+
+color_palette <-  brewer.pal(10, "Set3") 
+
+ggplot(sentiment_percentages, aes(x = Date, y = percentage, fill = sentiment)) +
+  geom_col(position = "stack", alpha = 0.6) +  # Stacked bar chart
+  scale_fill_manual(values = color_palette) +  # Apply the custom color scale
+  labs(title = "Sentiment Distribution Over Time",
+       x = "Date",
+       y = "Percentage (%)",
+       fill = "Sentiment") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+

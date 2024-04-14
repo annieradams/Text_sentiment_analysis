@@ -1,0 +1,226 @@
+---
+title: "Lab 1"
+author: "Annie Adams"
+date: "2024-04-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Assignment (Due Tuesday 4/9 11:59pm)
+
+Reminder: Please suppress all long and extraneous output from your submissions (ex:  lists of tokens).
+
+1.  Create a free New York Times account (<https://developer.nytimes.com/get-started>)
+
+2.  Pick an interesting environmental key word(s) and use the {jsonlite} package to query the API. Pick something high profile enough and over a large enough time frame that your query yields enough articles for an interesting examination.
+
+
+### Load packages and API
+```{r message = FALSE}
+library(jsonlite) #convert results from API queries into R-friendly formats 
+library(tidyverse) #tidy
+library(tidytext) #text data management and analysis
+library(ggplot2) #plot word frequencies and publication dates
+library(SnowballC)
+
+#assign API key.  When you create a NYT Dev account, you will be given a key
+API_KEY <- "ERo5sxAymDAb3wBUjmo3h2ifSM1p552m"
+
+
+#create the query url
+url <- paste("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=haaland&api-key=",API_KEY, sep ="")
+
+#send the request, receive the response, and flatten
+t <- fromJSON(url, flatten = T)
+```
+
+
+```{r}
+
+enviro_term1 <- "carbon"
+#enviro_term2 <- "plastic"
+begin_date <- "20210120"
+end_date <- "20230404"
+
+#construct the query url using API operators
+baseurl <- paste0("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=",
+                  enviro_term1, 
+                  "&begin_date=", begin_date,
+                  "&end_date=", end_date,
+                  "&facet_filter=true",
+                  "&api-key=", API_KEY)
+
+#examine our query url
+baseurl
+```
+
+
+```{r message = FALSE, echo=FALSE}
+#run initial query
+initialQuery <- fromJSON(baseurl)
+
+#maxPages <- round((initialQuery$response$meta$hits[1] / 10)-1) 
+maxPages <- 10
+#initiate a list to hold results of our for loop
+pages <- list()
+
+#loop
+for(i in 0:maxPages){
+  nytSearch <- fromJSON(paste0(baseurl, "&page=",i), flatten = TRUE) %>% data.frame()
+  message("Retrieving page ", i)
+  pages[[i+1]] <- nytSearch 
+  Sys.sleep(12)
+}
+```
+
+
+
+3.  Recreate the publications per day and word frequency plots using the first paragraph field.  This time filter on the response.docs.news_desk variable to winnow out irrelevant results.
+
+### Publications per day
+
+```{r}
+
+
+#bind the pages and create a tibble from nytDat
+nyt_df <- bind_rows(pages)
+
+
+
+tokenized <- nyt_df %>%
+  filter(response.docs.news_desk %in% c("Climate", "OpEd", "Washington")) %>%
+unnest_tokens(word, response.docs.lead_paragraph) #word is the new column, paragraph is the source
+
+
+```
+
+
+### Publication per day plot
+```{r}
+
+tokenized %>%
+  mutate(pubDay=gsub("T.*","",response.docs.pub_date)) %>% 
+  group_by(pubDay) %>%
+  summarise(count=n()) %>%
+  ggplot() +
+  geom_bar(aes(x=reorder(pubDay, count), y=count), stat="identity") +
+  coord_flip() #bring date so bars go lengthwise
+```
+
+### Word frequency
+
+```{r}
+
+tokenized %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 15) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col()+
+  labs(y = NULL)
+
+
+
+```
+
+
+-   Make some (at least 3) transformations to the corpus including: add context-specific stopword(s), stem a key term and its variants, remove numbers) 
+
+
+### Add context specific stopwords
+```{r message = FALSE}
+tokenized <- tokenized %>%
+  anti_join(get_stopwords(source = "snowball"))
+```
+
+### 
+```{r}
+
+#inspect the list of tokens (words)
+#tokenized$word
+
+#remove all numbers
+clean_tokens <- str_remove_all(tokenized$word, "[:digit:]") 
+
+#remove s contractions
+clean_tokens <- gsub("’s", '', clean_tokens)
+
+
+tokenized$clean <- clean_tokens
+
+tokenized %>%
+  count(clean, sort = TRUE) %>%
+  mutate(clean = reorder(clean, n)) %>%
+  ggplot(aes(n, clean)) +
+  geom_col() +
+  labs(y = NULL)
+
+#remove the empty strings
+tib <-subset(tokenized, clean!="")
+
+#reassign
+tokenized <- tib
+
+#try again
+tokenized %>%
+  count(clean, sort = TRUE) %>%
+  filter(n > 15) %>% 
+  mutate(clean = reorder(clean, n)) %>%
+  ggplot(aes(n, clean)) +
+  geom_col() +
+  labs(y = NULL)
+
+```
+
+
+
+
+
+
+
+
+4.  Recreate the publications per day and word frequency plots using the headlines variable (response.docs.headline.main). Compare the distributions of word frequencies between the first paragraph and headlines. Do you see any difference?
+
+
+
+```{r}
+
+
+#Re-assigning to use the headlines variable ---
+nyt_df2<- 
+nyt_df %>% 
+  filter(response.docs.news_desk %in% c("Climate", "OpEd", "Washington")) %>%
+unnest_tokens(word, response.docs.headline.main) 
+
+
+#Publications per day plot ---
+nyt_df2 %>%
+  mutate(pubDay=gsub("T.*","",response.docs.pub_date)) %>% #global substitution to pull out time portion of dates (with T.)
+  filter(response.docs.news_desk %in% c("Climate", "Washington", "OpEd")) %>% 
+  group_by(pubDay) %>% 
+  summarise(count=n()) %>%
+  ggplot() +
+  geom_bar(aes(x=reorder(pubDay, count), y=count), stat="identity") +
+  coord_flip() #bring date so bars go longwise
+```
+
+
+```{r}
+
+
+#Word frequency plot ---
+nyt_df2 %>% 
+  count(word, sort = TRUE) %>% #calculating # of words
+  filter(n > 15) %>% 
+  mutate(word = reorder(word, n)) %>%  #ordering by n for frequency to get most common words
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(y = NULL)
+```
+
+
+
+I did see a difference between word freuqencies between headlines and first paragraphs. The headlines  contained the word I chose ( carbon) a lot more than the first paragraph. This is likely because articles relating to carbon emissions would like contain the word in the headline of the article. Climate was also used more frequently in the headlines in than the lead paragraph, likely because articles about carbon are likely to relate the issues to the climate crisis, and therefore the word climate wold also likely be included in the headline. 
